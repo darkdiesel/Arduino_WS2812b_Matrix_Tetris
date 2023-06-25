@@ -1,5 +1,7 @@
 #define DEBUG_MODE false
 
+#include <EEPROM.h>
+
 #define START_TOP_RIGHT 1
 #define START_TOP_LEFT 0
 
@@ -24,11 +26,11 @@ CLEDController* controllers[2];
 bool cup_leds[NUM_ROW_LEDS][NUM_COL_LEDS];
 byte cup_leds_collors[NUM_ROW_LEDS][NUM_COL_LEDS];
 
-int cur_brightness = 30;
+int current_brightness = 30;
 
 unsigned long global_timer; // global timer
 
-#define GLOBAL_LOOP 50 // global timer loop
+#define GLOBAL_LOOP 10 // global timer loop
 
 int random_loop = 300;
 unsigned long random_timer; // random timer
@@ -58,7 +60,7 @@ bool btn_joystick_current_state = LOW;
 #include <math.h>
 
 #define FIGURE_SIZE 4 // max with or height for figure
-#define FIGURE_COUNT 6 // Count of figures for random
+#define FIGURE_COUNT 7 // Count of figures for random
 
 bool figure[FIGURE_SIZE][FIGURE_SIZE];
 
@@ -67,6 +69,9 @@ int figure_y;
 byte figure_color;
 
 byte game_speed = 1;
+
+// Snake vars
+byte game_num;
 bool game_over = false;
 
 void init_figure(byte figure_num = 0) {
@@ -104,13 +109,13 @@ void init_figure(byte figure_num = 0) {
       figure[2][0] = true;
       figure[3][0] = true;
       break;
-    case 3: // ""
+    case 3: // "/\/"
       figure[1][1] = true;
       figure[2][0] = true;
       figure[2][1] = true;
       figure[3][0] = true;
       break;
-    case 4: // ""
+    case 4: // "\/\"
       figure[1][0] = true;
       figure[2][0] = true;
       figure[2][1] = true;
@@ -122,22 +127,28 @@ void init_figure(byte figure_num = 0) {
       figure[3][0] = true;
       figure[3][1] = true;
       break;
+    case 6: // "T"
+      figure[2][0] = true;
+      figure[2][1] = true;
+      figure[2][2] = true;
+      figure[3][1] = true;
+      break;
   }
 
-  // for (int i = FIGURE_SIZE - 1; i >=0 ; i--) {
-  //   for (int j = FIGURE_SIZE - 1; j >=0; j--) {
-  //     if (figure[i][j]) {
-  //       _y = (figure_y + 1 - FIGURE_SIZE + (i + 1));
+  for (int i = FIGURE_SIZE - 1; i >=0 ; i--) {
+    for (int j = FIGURE_SIZE - 1; j >=0; j--) {
+      if (figure[i][j]) {
+        _y = (figure_y + 1 - FIGURE_SIZE + (i + 1));
 
-  //       if (_y >= 0) {
-  //         if (cup_leds[_y][j + figure_x]) {
-  //           game_over = true;
-  //           return false;
-  //         }
-  //       }
-  //     }
-  //   }
-  // }
+        if (_y >= 0) {
+          if (cup_leds[_y][j + figure_x]) {
+            game_over = true;
+            return false;
+          }
+        }
+      }
+    }
+  }
 
   // if (DEBUG_MODE) {
   //   Serial.println("init figure");
@@ -162,7 +173,7 @@ void check_lines(){
   
 }
 
-void game_tick(){
+void game_tetris_tick(){
   int _y;
 
   figure_y++;
@@ -174,7 +185,7 @@ void game_tick(){
       Serial.println("Figure on the end of cup. Init new figure.");
     }
 
-    // TODO: Check lines for destroy
+    check_lines();
 
     init_figure(random(FIGURE_COUNT)); // init new figure
     return;
@@ -192,7 +203,7 @@ void game_tick(){
            if (_y >= 0 && cup_leds[_y][j + figure_x]) {
             // figure can't moving down more
 
-            // TODO: Check lines for destroy
+            check_lines();
 
             init_figure(random(FIGURE_COUNT)); // init new figure
             return;
@@ -217,13 +228,6 @@ void game_tick(){
           
           cup_leds[_y][j + figure_x] = true;
           cup_leds_collors[_y][j + figure_x] = figure_color;
-
-          // Serial.print("figure color y: ");
-          // Serial.println(_y);
-          // Serial.print("figure color x: ");
-          // Serial.println(j + figure_x);
-          // Serial.print("color: ");
-          // Serial.println(figure_color);
         }
       }
     }
@@ -301,27 +305,54 @@ bool debounce(uint8_t btn_pin, bool last) {
   return current;
 }
 
+// update device settings
+void updateEEPROM() {
+  EEPROM.write(1, current_brightness);
+  
+  if (game_num == 1) {
+    EEPROM.write(2, 0);
+  } else {
+    EEPROM.write(2, 1);
+  }
+}
+
+// read device settings
+void readEEPROM() {
+  current_brightness = EEPROM.read(1);
+  game_num = EEPROM.read(2);
+
+  if (current_brightness == 0) {
+    current_brightness = 10;
+    updateEEPROM();
+  }
+
+  if (game_num > 1) {
+    game_num = 0;
+    updateEEPROM();
+  }
+}
+
 void setup() {
   if (DEBUG_MODE) {
     Serial.begin(9600);
-
-    Serial.print(" ROWS: ");
-    Serial.println(NUM_ROW_LEDS);
   }
 
-  // print_matrix();
-  // update_matrix_leds();
+  // Read variables from memory
+  readEEPROM();
+
+  // Update variables from memory
+  updateEEPROM();
 
     // setup led
-  FastLED.setBrightness(cur_brightness);  // set leds brightness
+  FastLED.setBrightness(current_brightness);  // set leds brightness
   FastLED.addLeds<LED_TYPE, LED_PIN, GRB>(leds, NUM_LEDS);
 
   // make lead black before start
-  //FastLED.clear();
+  FastLED.clear();
   //FastLED.show();
 
   // setup led
-  //FastLED.setBrightness(cur_brightness);  // set leds brightness
+  //FastLED.setBrightness(current_brightness);  // set leds brightness
   //controllers[0] = &FastLED.addLeds<LED_TYPE, LED_PIN, GRB>(leds, NUM_LEDS);
 
   randomSeed(analogRead(A3));
@@ -357,10 +388,18 @@ void loop() {
   if (millis() - global_timer > GLOBAL_LOOP * game_speed) {
     global_timer = millis();  // reset main timer
     
-    game_tick();
-    update_matrix_leds();
-    FastLED.show();
+    if (!game_over) {
 
+      switch (game_num) {
+        case 0:
+          game_tetris_tick();
+        break;
+      }
+      
+      update_matrix_leds();
+      FastLED.show();
+    }
+    
     if (DEBUG_MODE) {
       // Serial.println("tick");
 
