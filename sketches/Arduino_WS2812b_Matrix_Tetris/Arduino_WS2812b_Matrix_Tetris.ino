@@ -14,23 +14,19 @@
 #define LED_START_DIRECTION START_TOP_RIGHT // first point (led)
 
 #define NUM_LEDS 256     // Count of leds
-#define NUM_COL_LEDS 8 // Count of leds in one row
+#define NUM_LED_COLS 8 // Count of leds in one row
 
-const int NUM_ROW_LEDS = NUM_LEDS / NUM_COL_LEDS; // Count of led rows 
+const int NUM_LED_ROWS = NUM_LEDS / NUM_LED_COLS; // Count of led rows 
 
 #define MATRIX_COUNT 1 // count of matrix
 
 CRGB leds[NUM_LEDS];
 CLEDController* controllers[2];
 
-bool cup_leds[NUM_ROW_LEDS][NUM_COL_LEDS];
-byte cup_leds_collors[NUM_ROW_LEDS][NUM_COL_LEDS];
+bool cup_leds[NUM_LED_ROWS][NUM_LED_COLS];
+byte cup_led_collors[NUM_LED_ROWS][NUM_LED_COLS];
 
 int current_brightness = 30;
-
-unsigned long global_timer; // global timer
-
-#define GLOBAL_LOOP 10 // global timer loop
 
 int random_loop = 300;
 unsigned long random_timer; // random timer
@@ -53,6 +49,10 @@ const byte collors_count = sizeof(collors) / sizeof(collors[0]);
 #define JOYSTICK_VRY_PIN A0
 #define JOYSTICK_SWT_PIN 9
 
+#define JOYSTICK_X_CENTER 510
+#define JOYSTICK_Y_CENTER 511
+#define JOYSTICK_DEAD_ZONE 40
+
 bool btn_joystick_last_state = LOW;
 bool btn_joystick_current_state = LOW;
 
@@ -68,18 +68,26 @@ int figure_x;
 int figure_y;
 byte figure_color;
 
-byte game_speed = 1;
+int game_speed = 100;
 
 // Snake vars
 byte game_num;
 bool game_over = false;
 
+// common games vars
+unsigned long global_timer; // global timer
+unsigned long game_timer; // game timer
+unsigned long controls_timer; // key timer for controls
+
+#define GLOBAL_LOOP 5 // global timer loop
+#define CONTROLS_LOOP 90 // key timer loop for controls
+
 void init_figure(byte figure_num = 0) {
   int _y;
 
-  figure_y = -1;
-  figure_x = (int)round(NUM_COL_LEDS / 2);
-  figure_x = random(NUM_COL_LEDS - 1);
+  figure_y = -1; // generate new figure out of cup for next step it will move to 0 by Y Axis
+  figure_x = (int)round(NUM_LED_COLS / 2) - 1;
+  //figure_x = random(NUM_LED_COLS - 1); // random x
   figure_color = random(collors_count);
 
   // clear previous figure from array
@@ -149,96 +157,380 @@ void init_figure(byte figure_num = 0) {
       }
     }
   }
+}
 
-  // if (DEBUG_MODE) {
-  //   Serial.println("init figure");
+void clean_move_down_cup(int start) {
+  for (int j = 0; j < NUM_LED_COLS; j++) {
+    cup_leds[start][j] = false;
+  }
 
-  //   Serial.print("figure num: ");
-  //   Serial.println(figure_num);
+  for (int i = start - 1; i >= 0; i--) { 
+    for (int j = 0; j < NUM_LED_COLS; j++) { 
+      if (cup_leds[i][j]) {
+        cup_leds[i][j] = false; // clean point
+        cup_leds[i+1][j] = true; // move point to next row
+        cup_led_collors[i+1][j] = cup_led_collors[i][j]; // move color
+      }
+    }
+  }
 
-  //   Serial.print("init figure y: ");
-  //   Serial.println(figure_y);
-  //   Serial.print("init figure x: ");
-  //   Serial.println(figure_x);
-  //   Serial.print("init figure c: ");
-  //   Serial.println(figure_color);
-    
-  //   // print_figure();
-  //   // print_color_matrix();
-  // }
+  FastLED.show();
 }
 
 // check lines to destroy
 void check_lines(){
-  
+  bool line_full = true;
+  byte line_count = FIGURE_SIZE; // count of line need to check
+
+  int _y = figure_y - 1;
+
+  while (line_count > 0) {
+    line_full = true;
+
+    for (int j = 0; j < NUM_LED_COLS; j++) { // check if line full
+      if (!cup_leds[_y][j]) {
+        line_full = false;
+      }
+    }
+
+    if (line_full) {
+      clean_move_down_cup(_y);
+    } else {
+      _y--;
+    }
+
+    line_count--;
+  }
 }
 
 void game_tetris_tick(){
+  if (move_down()) {
+    update_matrix_leds();
+    FastLED.show();
+  }
+}
+
+// check keys on joystick
+void game_check_keys() {
+  // check if setup Joystick BTN was pressed
+  btn_joystick_current_state = debounce(JOYSTICK_SWT_PIN, btn_joystick_last_state);
+
+  if (btn_joystick_last_state == HIGH && btn_joystick_current_state == LOW) {
+    //change brightness
+
+    current_brightness += 30;
+
+    if (current_brightness > 255) {
+      current_brightness = 10;
+    }
+
+    // current_brightness form 0 to 255
+    FastLED.setBrightness(current_brightness);  // set leds brightness
+
+    updateEEPROM();
+
+    if (DEBUG_MODE) {
+      Serial.println("Joystick Pressed!");
+    }
+  }
+
+  btn_joystick_last_state = btn_joystick_current_state;
+
+  int x = analogRead(JOYSTICK_VRX_PIN);  // read x coordinate from joystick
+  int y = analogRead(JOYSTICK_VRY_PIN);  // read y coordinate from joystick
+
+  // x = 510 center
+  if (x >= 0 && x <= JOYSTICK_X_CENTER - JOYSTICK_DEAD_ZONE) {
+    // left pressed
+    if (move_left()) {
+      update_matrix_leds();
+      FastLED.show();
+    }
+  }
+
+  if (x >= JOYSTICK_X_CENTER + JOYSTICK_DEAD_ZONE && x <= 1023) {
+    // right pressed
+    if (move_right()) {
+      update_matrix_leds();
+      FastLED.show();
+    }
+  }
+
+  // y = 511 center
+  if (y >= 0 && y < JOYSTICK_Y_CENTER - JOYSTICK_DEAD_ZONE) {
+    // up pressed
+    if (move_up()) {
+      update_matrix_leds();
+      FastLED.show();
+    }
+  }
+
+  if (y > JOYSTICK_Y_CENTER + JOYSTICK_DEAD_ZONE && y <= 1023) {
+    // down pressed
+    if (move_down()) {
+      update_matrix_leds();
+      FastLED.show();
+    }
+  }
+}
+
+void pull_down(bool (& fig_arr) [FIGURE_SIZE][FIGURE_SIZE]) {
+  byte num_row_to_move = FIGURE_SIZE - 1;
+  bool have_points;
+
+  for (int i = FIGURE_SIZE - 1; i >= 0; i--) {
+    have_points = false;
+    for (int j = 0; j < FIGURE_SIZE; j++) {
+      if (fig_arr[i][j]) {
+        fig_arr[i][j] = false;
+        fig_arr[num_row_to_move][j] = true;
+        have_points = true;
+      }
+    }
+    if (have_points) {
+      num_row_to_move -= 1;
+    }
+  }
+}
+
+bool move_up() {
   int _y;
+  int _x;
+
+  bool figure_temp[FIGURE_SIZE][FIGURE_SIZE];  // temporary figure to store ration
+
+  // copy figure to tem variable and rotate it
+  for (int i = 0; i < FIGURE_SIZE; i++) {
+    for (int j = 0; j < FIGURE_SIZE; j++) {
+      figure_temp[j][FIGURE_SIZE - 1 - i] = figure[i][j];
+    }
+  }
+
+  // move figure to down position on array
+  pull_down(figure_temp);
+
+  // clean coordinates from cup with current figure
+  for (int j = 0; j < FIGURE_SIZE; j++) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        _y = (figure_y - FIGURE_SIZE + (i + 1));  // calculate cup coordinate for y
+        _x = figure_x + j;                        // calculate cup coordinate for x
+
+        if (_y >= 0 && _x >= 0) {
+          cup_leds[_y][_x] = false;  // remove old coordinate
+        }
+      }
+    }
+  }
+
+  // check if new figure have space
+  // TODO: Check in case no space at the left or right (but we can move figure in any direction to left or right and space will be enougph)
+  for (int j = 0; j < FIGURE_SIZE; j++) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure_temp[i][j]) {
+        _y = (figure_y - FIGURE_SIZE + (i + 1));  // calculate cup coordinate for y
+        _x = figure_x + j;                        // calculate cup coordinate for x
+
+        if (_y >= 0 && _y < NUM_LED_ROWS && _x >= 0 && _x < NUM_LED_COLS && cup_leds[_y][_x]) { // if coordinates inside cup check if point is empty
+          return false;
+        } else if (_y < 0 || _y >= NUM_LED_ROWS || _x < 0 || _x >= NUM_LED_COLS) { // TODO: think about this. Should i check this or not
+          return false;
+        }
+      }
+    }
+  }
+
+  // copy temp rotated figure to current
+  for (int i = 0; i < FIGURE_SIZE; i++) {
+    for (int j = 0; j < FIGURE_SIZE; j++) {
+      figure[i][j] = figure_temp[i][j];
+    }
+  }
+
+  for (int j = 0; j < FIGURE_SIZE; j++) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        _y = (figure_y - FIGURE_SIZE + (i + 1));  // calculate cup coordinate for y
+        _x = figure_x + j;                        // calculate cup coordinate for x
+
+        if (_y >= 0 && _x >= 0) {
+          cup_leds[_y][_x] = true;                 // write new coordinate
+          cup_led_collors[_y][_x] = figure_color;  // write new color
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool move_right() {
+  int _y;
+  int _x;
+
+  bool check_col_fig[FIGURE_SIZE] = { false, false, false, false };
+
+  // check if figure can move more to down
+  for (int j = FIGURE_SIZE - 1; j >= 0; j--) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        if (!check_col_fig[i] && figure[i][j]) {
+          _y = figure_y - FIGURE_SIZE + (i + 1);  // new coordinate for y
+          _x = figure_x + j + 1;                  // new coordinate for x + 1 (move right1)
+
+          if (_y >= 0 && _x < NUM_LED_COLS && cup_leds[_y][_x]) {
+            return false;
+          } else {
+            if (_x >= NUM_LED_COLS) {
+              return false;
+            }
+
+            check_col_fig[i] = true;
+          }
+        }
+      }
+    }
+  }
+
+  figure_x += 1;
+
+  // if code goes here start draw figure, space is free
+  for (int j = FIGURE_SIZE - 1; j >= 0; j--) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        _y = (figure_y - FIGURE_SIZE + (i + 1));  // calculate cup coordinate for y
+        _x = figure_x + j;                        // calculate cup coordinate for x
+
+        if (_y >= 0 && _x < NUM_LED_COLS) {
+          cup_leds[_y][_x - 1] = false;  // remove old coordinate
+
+          cup_leds[_y][_x] = true;                 // write new coordinate
+          cup_led_collors[_y][_x] = figure_color;  // write new color
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool move_left() {
+  int _y;
+  int _x;
+
+  bool check_col_fig[FIGURE_SIZE] = { false, false, false, false };
+
+  // check if figure can move more to down
+  for (int j = 0; j < FIGURE_SIZE; j++) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        if (!check_col_fig[i] && figure[i][j]) {
+          _y = figure_y - FIGURE_SIZE + (i + 1);  // new coordinate for y
+          _x = figure_x + j - 1;                  // new coordinate for x - 1 (move left)
+
+          if (_y >= 0 && _x >= 0 && cup_leds[_y][_x]) {
+            return false;
+          } else {
+            if (_x < 0) {
+              return false;
+            }
+
+            check_col_fig[i] = true;
+          }
+        }
+      }
+    }
+  }
+
+  figure_x -= 1;
+
+  // if code goes here start draw figure, space is free
+  for (int j = 0; j < FIGURE_SIZE; j++) {
+    for (int i = 0; i < FIGURE_SIZE; i++) {
+      if (figure[i][j]) {
+        _y = (figure_y - FIGURE_SIZE + (i + 1));  // calculate cup coordinate for y
+        _x = figure_x + j;                        // calculate cup coordinate for x
+
+        if (_y >= 0 && _x >= 0) {
+          cup_leds[_y][_x + 1] = false;  // remove old coordinate
+
+          cup_leds[_y][_x] = true;                 // write new coordinate
+          cup_led_collors[_y][_x] = figure_color;  // write new color
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool move_down() {
+  int _y;
+  int _x;
+  bool can_do_action = true;
 
   figure_y++;
 
-  if (figure_y >= NUM_ROW_LEDS) {
-    // figure can't moving down more. Limit of cup height
-    
-    if (DEBUG_MODE) {
-      Serial.println("Figure on the end of cup. Init new figure.");
-    }
+  bool check_col_fig[FIGURE_SIZE] = { false, false, false, false };  // flags for cols that figure can move down with all parts
 
-    check_lines();
-
-    init_figure(random(FIGURE_COUNT)); // init new figure
-    return;
-  }
-  
-  bool check_col_fig[FIGURE_SIZE] = {false, false, true, true};
-
-  // check figure can move more to down
-  for (int i = FIGURE_SIZE - 1; i >=0 ; i--) {
-    for (int j = FIGURE_SIZE - 1; j >=0; j--) {
+  // check if figure can move more to down
+  for (int i = FIGURE_SIZE - 1; i >= 0; i--) {
+    for (int j = FIGURE_SIZE - 1; j >= 0; j--) {
       if (figure[i][j]) {
         if (!check_col_fig[j] && figure[i][j]) {
-           _y = (figure_y - FIGURE_SIZE + (i + 1));
+          _y = figure_y - FIGURE_SIZE + (i + 1);
+          _x = j + figure_x;
 
-           if (_y >= 0 && cup_leds[_y][j + figure_x]) {
+          if (_y >= 0 && _y < NUM_LED_ROWS && cup_leds[_y][_x]) {
             // figure can't moving down more
 
-            check_lines();
+            check_lines();  // check if possible to destroy full lines
 
-            init_figure(random(FIGURE_COUNT)); // init new figure
-            return;
-           } else {
-             check_col_fig[j] = true;
-           }
-        }
-      }
-    }
-  }
+            init_figure(random(FIGURE_COUNT));  // init new figure
+            return false;                       // exit tick function not enougph spaces to move
+          } else {
+            if (_y >= NUM_LED_ROWS) {
+              check_lines();  // check if possible to destroy full lines
+              init_figure(random(FIGURE_COUNT));  // init new figure
+              return false;
+            }
 
-  // check if cup have empty space to start draw figure if not game is over
-  for (int i = FIGURE_SIZE - 1; i >=0 ; i--) {
-    for (int j = FIGURE_SIZE - 1; j >=0; j--) {
-      if (figure[i][j]) {
-        _y = (figure_y - FIGURE_SIZE + (i + 1));
-
-        if (_y >= 0) {
-          if (_y > 0) {
-            cup_leds[_y-1][j + figure_x] = false;
+            check_col_fig[j] = true;
           }
-          
-          cup_leds[_y][j + figure_x] = true;
-          cup_leds_collors[_y][j + figure_x] = figure_color;
         }
       }
     }
   }
+
+  if (can_do_action) {
+    // if code goes here start draw figure, space is free
+    for (int i = FIGURE_SIZE - 1; i >= 0; i--) {
+      for (int j = FIGURE_SIZE - 1; j >= 0; j--) {
+        if (figure[i][j]) {
+          _y = (figure_y - FIGURE_SIZE + (i + 1));
+          _x = figure_x + j; 
+
+          if (_y >= 0) {
+            if (_y > 0) {
+              cup_leds[_y - 1][_x] = false;
+            }
+
+            cup_leds[_y][_x] = true;
+            cup_led_collors[_y][_x] = figure_color;
+          }
+        }
+      }
+    }
+  }
+
+  return can_do_action;
 }
 
 // convert i, j coordinates to led num for ws2812b 
 int get_led_num(int i = 0, int j = 0){
   switch (LED_START_DIRECTION) {
     case START_TOP_RIGHT:
-      return NUM_COL_LEDS * i + ((i % 2) ? j : (NUM_COL_LEDS - j - 1));
+      return NUM_LED_COLS * i + ((i % 2) ? j : (NUM_LED_COLS - j - 1));
       break;
     case START_TOP_LEFT:
     default:
@@ -248,8 +540,8 @@ int get_led_num(int i = 0, int j = 0){
 }
 
 void print_matrix(){
-  for (int i = 0 ; i < NUM_ROW_LEDS; i++ ) {
-    for (int j = 0 ; j < NUM_COL_LEDS; j++ ) {
+  for (int i = 0 ; i < NUM_LED_ROWS; i++ ) {
+    for (int j = 0 ; j < NUM_LED_COLS; j++ ) {
       Serial.print(cup_leds[i][j]);
       Serial.print(" ");
     }
@@ -258,9 +550,9 @@ void print_matrix(){
 }
 
 void print_color_matrix(){
-  for (int i = 0 ; i < NUM_ROW_LEDS; i++ ) {
-    for (int j = 0 ; j < NUM_COL_LEDS; j++ ) {
-      Serial.print(cup_leds_collors[i][j]);
+  for (int i = 0 ; i < NUM_LED_ROWS; i++ ) {
+    for (int j = 0 ; j < NUM_LED_COLS; j++ ) {
+      Serial.print(cup_led_collors[i][j]);
       //Serial.print(" ");
     }
     Serial.println();
@@ -279,10 +571,10 @@ void print_figure(){
 
 // update leds in library
 void update_matrix_leds() {
-  for (int i = 0; i < NUM_ROW_LEDS; i++) {
-    for (int j = 0; j < NUM_COL_LEDS; j++) {
+  for (int i = 0; i < NUM_LED_ROWS; i++) {
+    for (int j = 0; j < NUM_LED_COLS; j++) {
       if (cup_leds[i][j]) {
-        leds[get_led_num(i, j)].setRGB(collors[cup_leds_collors[i][j]][0], collors[cup_leds_collors[i][j]][1], collors[cup_leds_collors[i][j]][2]);
+        leds[get_led_num(i, j)].setRGB(collors[cup_led_collors[i][j]][0], collors[cup_led_collors[i][j]][1], collors[cup_led_collors[i][j]][2]);
       } else {
         leds[get_led_num(i, j)].setRGB(0, 0, 0);
       }
@@ -343,18 +635,16 @@ void setup() {
   // Update variables from memory
   updateEEPROM();
 
-    // setup led
+  // setup led
   FastLED.setBrightness(current_brightness);  // set leds brightness
   FastLED.addLeds<LED_TYPE, LED_PIN, GRB>(leds, NUM_LEDS);
+  //controllers[0] = &FastLED.addLeds<LED_TYPE, LED_PIN, GRB>(leds, NUM_LEDS);
 
   // make lead black before start
   FastLED.clear();
   //FastLED.show();
-
-  // setup led
-  //FastLED.setBrightness(current_brightness);  // set leds brightness
-  //controllers[0] = &FastLED.addLeds<LED_TYPE, LED_PIN, GRB>(leds, NUM_LEDS);
-
+  
+  // generate seed start value for random random. Get value from empty analog PIN
   randomSeed(analogRead(A3));
 
   // joystick
@@ -365,53 +655,41 @@ void setup() {
 }
 
 void loop() {
-  // check if setup Joystick BTN was pressed
-  btn_joystick_current_state = debounce(JOYSTICK_SWT_PIN, btn_joystick_last_state);
-
-  if (btn_joystick_last_state == HIGH && btn_joystick_current_state == LOW) {
-    if (DEBUG_MODE) {
-      Serial.print("Joystick Pressed: ");
-      Serial.println(btn_joystick_last_state);
-    }
-  }
-
-  btn_joystick_last_state = btn_joystick_current_state;
-
-  int x=analogRead(JOYSTICK_VRX_PIN);
-  int y=analogRead(JOYSTICK_VRY_PIN);
-
-  // Serial.print("X: ");
-  // Serial.print(x);
-  // Serial.print(" Y: ");
-  // Serial.println(y);
-
-  if (millis() - global_timer > GLOBAL_LOOP * game_speed) {
+  if (millis() - global_timer > GLOBAL_LOOP) {
     global_timer = millis();  // reset main timer
-    
+   
     if (!game_over) {
+      if (millis() - controls_timer > (CONTROLS_LOOP)) {
+        controls_timer = millis();  // reset controls timer
 
-      switch (game_num) {
-        case 0:
-          game_tetris_tick();
-        break;
+        game_check_keys();
       }
-      
-      update_matrix_leds();
-      FastLED.show();
     }
-    
-    if (DEBUG_MODE) {
-      // Serial.println("tick");
+        
+    if (!game_over) {
+      if (millis() - game_timer > (GLOBAL_LOOP * game_speed)) {
+        game_timer = millis();  // reset game timer
+        
+        game_num = 0;
 
-      // Serial.print("figure y: ");
-      // Serial.println(figure_y);
-      // Serial.print("figure x: ");
-      // Serial.println(figure_x);
+        switch (game_num) {
+          case 0:
+            game_tetris_tick();
+          break;
+        }
+        
+        if (DEBUG_MODE) {
+          // Serial.println("tick");
 
-      // print_matrix();
-      // print_color_matrix();
+          // Serial.print("figure y: ");
+          // Serial.println(figure_y);
+          // Serial.print("figure x: ");
+          // Serial.println(figure_x);
+
+          // print_matrix();
+          // print_color_matrix();
+        }
+      }
     }
   }
- 
-  // FastLED.show();
 }
