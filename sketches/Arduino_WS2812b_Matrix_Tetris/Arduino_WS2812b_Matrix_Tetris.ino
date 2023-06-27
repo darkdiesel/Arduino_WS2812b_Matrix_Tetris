@@ -51,7 +51,7 @@ const byte collors_count = sizeof(collors) / sizeof(collors[0]);
 
 #define JOYSTICK_X_CENTER 510
 #define JOYSTICK_Y_CENTER 511
-#define JOYSTICK_DEAD_ZONE 40
+#define JOYSTICK_DEAD_ZONE 70
 
 bool btn_joystick_last_state = LOW;
 bool btn_joystick_current_state = LOW;
@@ -64,17 +64,20 @@ bool btn_joystick_current_state = LOW;
 
 bool figure[FIGURE_SIZE][FIGURE_SIZE];
 
-int figure_x;
+int figure_x; 
 int figure_y;
 byte figure_color;
 
 int game_speed = 100;
 
 // Snake vars
+byte snake_direction; // 1 - up, 2 - down, 3 - left, 4 - right
+int snake_length;
+
+// common games vars
 byte game_num;
 bool game_over = false;
 
-// common games vars
 unsigned long global_timer; // global timer
 unsigned long game_timer; // game timer
 unsigned long controls_timer; // key timer for controls
@@ -85,9 +88,12 @@ unsigned long controls_timer; // key timer for controls
 void init_figure(byte figure_num = 0) {
   int _y;
 
+  // sen start position for figure
   figure_y = -1; // generate new figure out of cup for next step it will move to 0 by Y Axis
   figure_x = (int)round(NUM_LED_COLS / 2) - 1;
   //figure_x = random(NUM_LED_COLS - 1); // random x
+  
+  // set random figure color
   figure_color = random(collors_count);
 
   // clear previous figure from array
@@ -143,6 +149,7 @@ void init_figure(byte figure_num = 0) {
       break;
   }
 
+  // Check if we canno't move more down figure set game over TODO: think to move to tick
   for (int i = FIGURE_SIZE - 1; i >=0 ; i--) {
     for (int j = FIGURE_SIZE - 1; j >=0; j--) {
       if (figure[i][j]) {
@@ -159,6 +166,7 @@ void init_figure(byte figure_num = 0) {
   }
 }
 
+// clear line on cup on start possion and move down all points
 void clean_move_down_cup(int start) {
   for (int j = 0; j < NUM_LED_COLS; j++) {
     cup_leds[start][j] = false;
@@ -203,6 +211,69 @@ void check_lines(){
   }
 }
 
+void game_snake_init(){
+  // set start position for snake
+  figure_y = (int)round(NUM_LED_ROWS / 2); 
+  figure_x = (int)round(NUM_LED_COLS / 2);
+
+  // set random snake color
+  figure_color = random(collors_count);
+  
+  // set snake direction to up
+  snake_direction = 1;
+
+  // set snake length
+  snake_length = 1;
+
+  // TODO: array of pointers to cup_leds
+}
+
+void game_snake_tick(){
+
+  if (DEBUG_MODE) {
+
+  }
+
+  cup_leds[figure_y][figure_x] = false;
+
+  // move snake to direction
+  switch (snake_direction) {
+    case 1: // move up
+        figure_y--;
+
+        if (figure_y < 0)
+          figure_y = NUM_LED_ROWS - 1;
+
+      break;
+    case 2: // move down
+        figure_y++;
+        if (figure_y >= NUM_LED_ROWS)
+
+          figure_y = 0;
+      break;
+    case 3: // move left
+        figure_x--;
+        if (figure_x < 0)
+          figure_x = NUM_LED_COLS - 1;
+      break;
+    case 4: // move right
+        figure_x++;
+        if (figure_x >= NUM_LED_COLS)
+          figure_x = 0;
+      break;
+  }
+
+  cup_leds[figure_y][figure_x] = true; // move snale to new point
+  cup_led_collors[figure_y][figure_x] = figure_color;  // write color for snake to new point
+
+  update_matrix_leds();
+  FastLED.show();
+}
+
+void game_tetris_init() {
+  init_figure(random(FIGURE_COUNT));
+}
+
 void game_tetris_tick(){
   if (move_down()) {
     update_matrix_leds();
@@ -242,34 +313,63 @@ void game_check_keys() {
   // x = 510 center
   if (x >= 0 && x <= JOYSTICK_X_CENTER - JOYSTICK_DEAD_ZONE) {
     // left pressed
-    if (move_left()) {
-      update_matrix_leds();
-      FastLED.show();
+
+    switch (game_num) {
+      case 0:  // tetris game
+        if (move_left()) {
+          update_matrix_leds();
+          FastLED.show();
+        }
+        break;
+      case 1:  // snake game
+        snake_direction = 3;
+        break;
     }
   }
 
   if (x >= JOYSTICK_X_CENTER + JOYSTICK_DEAD_ZONE && x <= 1023) {
     // right pressed
-    if (move_right()) {
-      update_matrix_leds();
-      FastLED.show();
+    switch (game_num) {
+      case 0:  // tetris game
+        if (move_right()) {
+          update_matrix_leds();
+          FastLED.show();
+        }
+        break;
+      case 1:  // snake game
+        snake_direction = 4;
+        break;
     }
   }
 
   // y = 511 center
   if (y >= 0 && y < JOYSTICK_Y_CENTER - JOYSTICK_DEAD_ZONE) {
     // up pressed
-    if (move_up()) {
-      update_matrix_leds();
-      FastLED.show();
+    switch (game_num) {
+      case 0:  // tetris game
+        if (move_up()) {
+          update_matrix_leds();
+          FastLED.show();
+        }
+        break;
+      case 1:  // snake game
+        snake_direction = 1;
+        break;
     }
   }
 
   if (y > JOYSTICK_Y_CENTER + JOYSTICK_DEAD_ZONE && y <= 1023) {
     // down pressed
-    if (move_down()) {
-      update_matrix_leds();
-      FastLED.show();
+    switch (game_num) {
+      case 0:  // tetris game
+        if (move_down()) {
+          update_matrix_leds();
+          FastLED.show();
+        }
+        break;
+      case 1:  // snake game
+        snake_direction = 2;
+        break;
     }
   }
 }
@@ -650,8 +750,14 @@ void setup() {
   // joystick
   pinMode(JOYSTICK_SWT_PIN, INPUT_PULLUP);
 
-  //tetris
-  init_figure(random(FIGURE_COUNT));
+  switch (game_num) {
+    case 0:
+      game_tetris_init(); //tetris
+    break;
+    case 1:
+      game_snake_init(); //snake
+    break;
+  }
 }
 
 void loop() {
@@ -670,11 +776,12 @@ void loop() {
       if (millis() - game_timer > (GLOBAL_LOOP * game_speed)) {
         game_timer = millis();  // reset game timer
         
-        game_num = 0;
-
         switch (game_num) {
           case 0:
             game_tetris_tick();
+          break;
+          case 1:
+            game_snake_tick();
           break;
         }
         
