@@ -22,7 +22,6 @@ const uint8_t NUM_LED_ROWS = NUM_LEDS / NUM_LED_COLS; // Count of led rows
 #define MATRIX_COUNT 1 // count of matrix
 
 CRGB leds[NUM_LEDS];
-CLEDController* controllers[2];
 
 bool cup_leds[NUM_LED_ROWS][NUM_LED_COLS];
 byte cup_led_collors[NUM_LED_ROWS][NUM_LED_COLS];
